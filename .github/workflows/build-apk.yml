@@ -35,7 +35,8 @@ jobs:
           curl -sSLo /tmp/gradle.zip "https://services.gradle.org/distributions/gradle-${VER}-bin.zip"
           unzip -q /tmp/gradle.zip -d /tmp
           mkdir -p /tmp/wrapgen && cd /tmp/wrapgen
-          "/tmp/gradle-${VER}/bin/gradle" wrapper --gradle-version "${VER}" --distribution-type all --quiet
+          echo 'rootProject.name = "wrapgen"' > settings.gradle.kts
+          "/tmp/gradle-${VER}/bin/gradle" wrapper --gradle-version "${VER}" --distribution-type all
           cp -r /tmp/wrapgen/gradle /tmp/wrapgen/gradlew /tmp/wrapgen/gradlew.bat "$GITHUB_WORKSPACE/android/"
           chmod +x "$GITHUB_WORKSPACE/android/gradlew"
           ls -l "$GITHUB_WORKSPACE/android/gradle/wrapper/" "$GITHUB_WORKSPACE/android/gradlew"
