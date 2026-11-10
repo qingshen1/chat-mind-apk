@@ -39,10 +39,15 @@ cd Straight-Guy-Chat-Tool-chat_mind
 flutter pub get
 ```
 
-3. 配置 API Key
+3. 配置 API
 
-- 前往 [火山引擎控制台](https://console.volcengine.com/ark/) 获取 API Key
-- 在APP设置页面配置 API Key
+- 默认走[火山引擎豆包](https://console.volcengine.com/ark/)，也可以换成任意 OpenAI 兼容接口
+- 在 APP「设置 › API 配置」里填三样：
+  - **API 地址**：完整接口地址，例如 `https://api.openai.com/v1/chat/completions`；填到 `/v1` 会自动补全，留空用默认豆包地址
+  - **API Key / Token**：对应服务的 Key
+  - **模型名称**：例如 `gpt-4o`、`doubao-1.5-vision-pro-32k`
+- 填完点**测试连接**，确认地址、Key、模型都通，再点**保存设置**
+- 需要能读图的模型（分析要用截图）
 
 4. 运行
 

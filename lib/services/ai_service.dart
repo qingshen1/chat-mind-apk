@@ -14,9 +14,10 @@ class AIService {
   }) async {
     final apiKey = StorageService().apiKey;
     final model = StorageService().model;
+    final endpoint = _resolveEndpoint(StorageService().apiUrl);
 
     if (apiKey.isEmpty) {
-      throw Exception('请先配置豆包 API Key');
+      throw Exception('请先在设置里配置 API Key');
     }
 
     final base64Image = base64Encode(imageBytes);
@@ -42,16 +43,19 @@ class AIService {
     };
 
     final response = await http.post(
-      Uri.parse(Constants.doubaoBaseUrl),
+      Uri.parse(endpoint),
       headers: {
         'Content-Type': 'application/json',
         'Authorization': 'Bearer $apiKey',
       },
       body: jsonEncode(requestBody),
-    );
+    ).timeout(const Duration(seconds: 90), onTimeout: () {
+      throw Exception('AI请求超时，请检查 API 地址和网络');
+    });
 
     if (response.statusCode != 200) {
-      throw Exception('AI请求失败: ${response.statusCode} ${response.body}');
+      final body = utf8.decode(response.bodyBytes, allowMalformed: true);
+      throw Exception('AI请求失败: ${response.statusCode} ${_snippet(body)}');
     }
 
     final data = jsonDecode(utf8.decode(response.bodyBytes));
@@ -62,6 +66,80 @@ class AIService {
     }
 
     return _parseContent(content);
+  }
+
+  /// 把用户填的地址整理成完整的 chat/completions 接口地址。
+  /// 空值用默认豆包接口；只填到 /v1、/v3 时自动补全；填了完整地址则原样使用。
+  static String _resolveEndpoint(String raw) {
+    var url = raw.trim();
+    if (url.isEmpty) url = Constants.defaultApiUrl;
+    while (url.endsWith('/')) {
+      url = url.substring(0, url.length - 1);
+    }
+
+    final uri = Uri.tryParse(url);
+    if (uri == null || !uri.hasScheme || (uri.host.isEmpty && uri.path.isEmpty)) {
+      throw Exception('API 地址格式不正确，请填完整地址，例如 https://api.example.com/v1/chat/completions');
+    }
+
+    final lower = url.toLowerCase();
+    if (lower.endsWith('/chat/completions') || lower.endsWith('/completions')) {
+      return url;
+    }
+
+    // 末尾已经是版本段（/v1、/v3、/v4 ...）时只补 chat/completions
+    final lastSegment = url.split('/').last;
+    if (RegExp(r'^v\d+([a-z0-9.+-]*)$', caseSensitive: false).hasMatch(lastSegment)) {
+      return '$url/chat/completions';
+    }
+
+    return '$url/v1/chat/completions';
+  }
+
+  /// 用当前配置发一个最小请求，验证地址、Key 和模型是否可用。
+  /// 只消耗极少 token；失败时抛出可直接展示的说明。
+  static Future<String> testConnection() async {
+    final apiKey = StorageService().apiKey;
+    final model = StorageService().model;
+    final endpoint = _resolveEndpoint(StorageService().apiUrl);
+
+    if (apiKey.isEmpty) {
+      throw Exception('请先填写 API Key / Token');
+    }
+
+    http.Response response;
+    try {
+      response = await http
+          .post(
+            Uri.parse(endpoint),
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': 'Bearer $apiKey',
+            },
+            body: jsonEncode({
+              'model': model,
+              'messages': [
+                {'role': 'user', 'content': 'ping'},
+              ],
+              'max_tokens': 8,
+            }),
+          )
+          .timeout(const Duration(seconds: 25));
+    } catch (e) {
+      throw Exception('连不上接口：${_snippet(e.toString())}');
+    }
+
+    if (response.statusCode != 200) {
+      final body = utf8.decode(response.bodyBytes, allowMalformed: true);
+      throw Exception('HTTP ${response.statusCode}：${_snippet(body)}');
+    }
+
+    return '连接成功（HTTP 200，模型 $model）';
+  }
+
+  static String _snippet(String text, [int max = 160]) {
+    final oneLine = text.replaceAll(RegExp(r'\s+'), ' ').trim();
+    return oneLine.length <= max ? oneLine : '${oneLine.substring(0, max)}…';
   }
 
   static String _buildSystemPrompt(

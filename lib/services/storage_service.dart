@@ -17,6 +17,9 @@ class StorageService {
   String get apiKey => _prefs?.getString(Constants.prefApiKey) ?? '';
   Future<void> setApiKey(String value) => _prefs?.setString(Constants.prefApiKey, value) ?? Future.value();
 
+  String get apiUrl => _prefs?.getString(Constants.prefApiUrl) ?? Constants.defaultApiUrl;
+  Future<void> setApiUrl(String value) => _prefs?.setString(Constants.prefApiUrl, value) ?? Future.value();
+
   String get model => _prefs?.getString(Constants.prefModel) ?? Constants.defaultModel;
   Future<void> setModel(String value) => _prefs?.setString(Constants.prefModel, value) ?? Future.value();
 

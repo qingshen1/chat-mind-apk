@@ -4,6 +4,7 @@ class Constants {
   static const String appVersion = '1.0.0';
 
   static const String prefApiKey = 'api_key';
+  static const String prefApiUrl = 'api_url';
   static const String prefModel = 'model';
   static const String prefScene = 'scene';
   static const String prefOpacity = 'opacity';
@@ -14,6 +15,9 @@ class Constants {
 
   static const String defaultModel = 'doubao-1.5-vision-pro-32k';
   static const String doubaoBaseUrl = 'https://ark.cn-beijing.volces.com/api/v3/chat/completions';
+
+  // 默认沿用豆包接口；可在设置里改成任意 OpenAI 兼容接口
+  static const String defaultApiUrl = doubaoBaseUrl;
 
   static const List<String> scenes = ['职场', '亲密关系', '家庭', '社交'];
 

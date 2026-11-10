@@ -743,7 +743,11 @@ class FloatWindowService : Service() {
                     WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
                 else
                     WindowManager.LayoutParams.TYPE_SYSTEM_ALERT,
-                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
+                // FLAG_NOT_FOCUSABLE：面板没有输入框，不抢输入焦点。
+                // 缺了它，面板一出现就会把焦点从下面的聊天 App 抢走，
+                // 键盘弹不出来（必须关掉面板才能打字）。
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                    WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
                     WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
                 PixelFormat.TRANSLUCENT
             ).apply {
