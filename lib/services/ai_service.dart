@@ -8,6 +8,29 @@ import '../utils/constants.dart';
 import 'storage_service.dart';
 
 class AIService {
+  /// 统一构造请求头：默认带 JSON 内容类型与 Bearer 鉴权，
+  /// 自定义服务商还会合并用户填写的额外请求头（v2.4）。
+  static Map<String, String> _buildHeaders({
+    required String apiKey,
+    bool json = true,
+  }) {
+    final headers = <String, String>{
+      if (json) 'Content-Type': 'application/json',
+      'Authorization': 'Bearer $apiKey',
+    };
+    final storage = StorageService();
+    if (storage.apiProvider == 'custom') {
+      storage.customExtraHeaders.forEach((key, value) {
+        if (value.isEmpty) return;
+        final lower = key.toLowerCase();
+        // 鉴权与内容类型由 App 统一管理，避免被额外请求头覆盖
+        if (lower == 'authorization' || lower == 'content-type') return;
+        headers[key] = value;
+      });
+    }
+    return headers;
+  }
+
   /// 分析聊天截图
   /// 支持任意 OpenAI 兼容格式的 API 端点
   static Future<AnalysisResult> analyzeImage(
@@ -76,10 +99,7 @@ class AIService {
     };
 
     // 构建请求头
-    final headers = <String, String>{
-      'Content-Type': 'application/json',
-      'Authorization': 'Bearer $apiKey',
-    };
+    final headers = _buildHeaders(apiKey: apiKey);
 
     // 发送请求
     // 自动补全 /chat/completions，避免用户只填到 /v1 时 404
@@ -201,8 +221,7 @@ class AIService {
     try {
       final request = http.Request('POST', Uri.parse(endpoint));
       request.headers.addAll({
-        'Content-Type': 'application/json',
-        'Authorization': 'Bearer $apiKey',
+        ..._buildHeaders(apiKey: apiKey),
         'Accept': 'text/event-stream',
       });
       request.body = jsonEncode(requestBody);
@@ -370,9 +389,7 @@ class AIService {
     }
 
     final modelsUrl = Constants.deriveModelsUrl(baseUrl);
-    final headers = <String, String>{
-      'Authorization': 'Bearer $apiKey',
-    };
+    final headers = _buildHeaders(apiKey: apiKey, json: false);
 
     final response = await http.get(
       Uri.parse(modelsUrl),
@@ -455,10 +472,7 @@ class AIService {
       'temperature': 0,
     };
 
-    final headers = <String, String>{
-      'Content-Type': 'application/json',
-      'Authorization': 'Bearer $apiKey',
-    };
+    final headers = _buildHeaders(apiKey: apiKey);
 
     final stopwatch = Stopwatch()..start();
 

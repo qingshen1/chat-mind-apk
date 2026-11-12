@@ -1,7 +1,7 @@
 
 class Constants {
   static const String appName = 'ChatMind';
-  static const String appVersion = '2.3.0';
+  static const String appVersion = '2.4.0';
 
   // SharedPreferences keys
   static const String prefApiKey = 'api_key';
@@ -24,6 +24,11 @@ class Constants {
   static const String prefKeyMigrated = 'key_migrated';
   // v2.3 新增：截图中最后一条消息的发送者
   static const String prefLastSpeaker = 'last_speaker';
+  // v2.4 新增：自定义 API 配置
+  static const String prefCustomBaseUrl = 'custom_base_url';
+  static const String prefCustomModel = 'custom_model';
+  static const String prefCustomVision = 'custom_supports_vision';
+  static const String prefCustomHeaders = 'custom_extra_headers';
 
   // Default values
   static const String defaultModel = 'doubao-1.5-vision-pro-32k';
@@ -111,8 +116,10 @@ class Constants {
       'name': '自定义 API',
       'base_url': '',
       'default_model': '',
+      // 实际取值见 StorageService.customSupportsVision，这里仅作占位
       'supports_vision': true,
-      'desc': '填写任意 OpenAI 兼容格式的 API 地址',
+      'supports_vision_dynamic': true,
+      'desc': '填写任意 OpenAI 兼容格式的 API 地址，支持额外请求头',
       'docs_url': '',
     },
   ];

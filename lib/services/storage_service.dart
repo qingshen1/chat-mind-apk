@@ -52,12 +52,18 @@ class StorageService {
     await _secureStorage.write(key: Constants.prefApiKey, value: value);
   }
 
-  String get model => _prefs?.getString(Constants.prefModel) ?? Constants.defaultModel;
+  String get model {
+    final stored = _prefs?.getString(Constants.prefModel);
+    if (stored != null && stored.isNotEmpty) return stored;
+    if (apiProvider == 'custom') return customModel;
+    return Constants.defaultModel;
+  }
   Future<void> setModel(String value) => _prefs?.setString(Constants.prefModel, value) ?? Future.value();
 
   String get baseUrl {
     final stored = _prefs?.getString(Constants.prefBaseUrl);
     if (stored != null && stored.isNotEmpty) return stored;
+    if (apiProvider == 'custom') return customBaseUrl;
     final provider = Constants.getProviderById(apiProvider);
     return provider?['base_url'] as String? ?? Constants.defaultBaseUrl;
   }
@@ -66,8 +72,9 @@ class StorageService {
   String get apiProvider => _prefs?.getString(Constants.prefApiProvider) ?? Constants.defaultApiProvider;
   Future<void> setApiProvider(String value) => _prefs?.setString(Constants.prefApiProvider, value) ?? Future.value();
 
-  /// 当前服务商是否支持视觉
+  /// 当前服务商是否支持视觉（自定义服务商由用户开关决定）
   bool get supportsVision {
+    if (apiProvider == 'custom') return customSupportsVision;
     final provider = Constants.getProviderById(apiProvider);
     return provider?['supports_vision'] as bool? ?? true;
   }
@@ -106,6 +113,67 @@ class StorageService {
 
   double get floatOpacity => _prefs?.getDouble(Constants.prefOpacity) ?? 0.85;
   Future<void> setOpacity(double value) => _prefs?.setDouble(Constants.prefOpacity, value) ?? Future.value();
+
+  // ==================== v2.4 自定义 API ====================
+
+  String get customBaseUrl => _prefs?.getString(Constants.prefCustomBaseUrl) ?? '';
+  Future<void> setCustomBaseUrl(String value) =>
+      _prefs?.setString(Constants.prefCustomBaseUrl, value) ?? Future.value();
+
+  String get customModel => _prefs?.getString(Constants.prefCustomModel) ?? '';
+  Future<void> setCustomModel(String value) =>
+      _prefs?.setString(Constants.prefCustomModel, value) ?? Future.value();
+
+  /// 自定义服务商是否支持图片（视觉）输入
+  bool get customSupportsVision => _prefs?.getBool(Constants.prefCustomVision) ?? true;
+  Future<void> setCustomSupportsVision(bool value) =>
+      _prefs?.setBool(Constants.prefCustomVision, value) ?? Future.value();
+
+  /// 额外请求头的原始 JSON 文本（编辑框回填用）
+  String get customExtraHeadersRaw => _prefs?.getString(Constants.prefCustomHeaders) ?? '';
+  Future<void> setCustomExtraHeadersRaw(String value) =>
+      _prefs?.setString(Constants.prefCustomHeaders, value) ?? Future.value();
+
+  /// 解析后的额外请求头；JSON 不合法时返回空 Map，不影响主流程
+  Map<String, String> get customExtraHeaders {
+    final raw = customExtraHeadersRaw.trim();
+    if (raw.isEmpty) return const {};
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is Map) {
+        final headers = <String, String>{};
+        decoded.forEach((key, value) {
+          if (key is String && key.trim().isNotEmpty) {
+            headers[key.trim()] = value?.toString() ?? '';
+          }
+        });
+        return headers;
+      }
+    } catch (_) {
+      // 格式不对就当作没填，避免请求被坏配置打断
+    }
+    return const {};
+  }
+
+  /// 校验额外请求头文本，合法返回 null，否则返回提示语
+  static String? validateExtraHeaders(String raw) {
+    final text = raw.trim();
+    if (text.isEmpty) return null;
+    try {
+      final decoded = jsonDecode(text);
+      if (decoded is! Map) {
+        return '额外请求头要写成 JSON 对象，例如 {"X-Api-Version":"1"}';
+      }
+      for (final entry in decoded.entries) {
+        if (entry.key is! String || (entry.key as String).trim().isEmpty) {
+          return '请求头名称不能为空';
+        }
+      }
+      return null;
+    } catch (_) {
+      return 'JSON 格式不正确，请检查引号和逗号';
+    }
+  }
 
   // ==================== 隐私 & 首次启动 ====================
 

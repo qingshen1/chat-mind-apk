@@ -77,4 +77,17 @@ class FloatWindowService {
       return false;
     }
   }
+
+  /// v2.4：把当前软键盘高度（物理像素）告诉原生悬浮窗，便于避让键盘。
+  /// 悬浮窗浮在其他 App 之上时拿不到 IME 信息，宿主 Activity 的数值最可靠。
+  static Future<bool> updateImeHeight(int heightPx) async {
+    try {
+      final result = await _channel.invokeMethod('updateImeHeight', {
+        'height': heightPx <= 0 ? 0 : heightPx,
+      });
+      return result == true;
+    } catch (e) {
+      return false;
+    }
+  }
 }

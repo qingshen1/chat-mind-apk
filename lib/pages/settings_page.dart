@@ -6,6 +6,7 @@ import '../utils/constants.dart';
 import '../services/storage_service.dart';
 import '../models/test_connection_result.dart';
 import '../services/ai_service.dart';
+import '../services/float_window_service.dart';
 import 'values_editor_page.dart';
 
 class SettingsPage extends StatefulWidget {
@@ -32,6 +33,12 @@ class _SettingsPageState extends State<SettingsPage> {
   late double _topP;
   bool _showAdvanced = false;
 
+  // v2.4 自定义 API
+  late TextEditingController _customHeadersController;
+  bool _customSupportsVision = true;
+  // v2.4：Max Tokens 用独立控制器，避免每次 build 新建导致输入被重置
+  late TextEditingController _maxTokensController;
+
   @override
   void initState() {
     super.initState();
@@ -42,24 +49,53 @@ class _SettingsPageState extends State<SettingsPage> {
     _selectedProviderId = storage.apiProvider;
     _opacity = storage.floatOpacity;
     _isCustomProvider = _selectedProviderId == 'custom';
+    // v2.4 加载自定义 API 配置（额外请求头按原始 JSON 文本回填，方便继续编辑）
+    _customHeadersController =
+        TextEditingController(text: storage.customExtraHeadersRaw);
+    _customSupportsVision = storage.customSupportsVision;
+    // 选中自定义且当前地址/模型为空时，用记住的自定义配置补齐
+    if (_isCustomProvider) {
+      if (_baseUrlController.text.trim().isEmpty) {
+        _baseUrlController.text = storage.customBaseUrl;
+      }
+      if (_modelController.text.trim().isEmpty) {
+        _modelController.text = storage.customModel;
+      }
+    }
     // v2.2 加载模型参数
     _temperature = storage.temperature;
     // 与请求侧一致：超过上限会对响应速度影响较大，这里统一收敛
     _maxTokens = storage.maxTokens.clamp(200, 1200).toInt();
     _topP = storage.topP;
+    _maxTokensController = TextEditingController(text: _maxTokens.toString());
   }
 
   /// 切换 API 服务商时自动填充默认值
+  /// v2.4：离开自定义服务商时先记住已填的地址/模型，切回时恢复，不清空用户输入
   void _onProviderChanged(String providerId) {
     final provider = Constants.getProviderById(providerId);
     if (provider == null) return;
+
+    final storage = StorageService();
+    // 记住当前自定义服务商的填写内容
+    if (_isCustomProvider && providerId != 'custom') {
+      storage.setCustomBaseUrl(_baseUrlController.text.trim());
+      storage.setCustomModel(_modelController.text.trim());
+    }
 
     setState(() {
       _selectedProviderId = providerId;
       _isCustomProvider = providerId == 'custom';
 
-      // 非自定义时自动填充默认 baseUrl 和 model
-      if (!_isCustomProvider) {
+      if (_isCustomProvider) {
+        // 切回自定义：恢复上次填写的地址与模型
+        final savedUrl = storage.customBaseUrl;
+        final savedModel = storage.customModel;
+        _baseUrlController.text = savedUrl;
+        _modelController.text = savedModel;
+        _customHeadersController.text = storage.customExtraHeadersRaw;
+        _customSupportsVision = storage.customSupportsVision;
+      } else {
         final defaultUrl = provider['base_url'] as String;
         final defaultModel = provider['default_model'] as String;
         _baseUrlController.text = defaultUrl;
@@ -77,6 +113,20 @@ class _SettingsPageState extends State<SettingsPage> {
       _baseUrlController.text = normalizedUrl;
     }
 
+    // v2.4：自定义服务商的额外请求头必须是合法 JSON，否则拒绝保存该字段
+    final headersRaw = _customHeadersController.text.trim();
+    final headersError = StorageService.validateExtraHeaders(headersRaw);
+    if (headersError != null) {
+      AppToast.show(context, headersError);
+      return;
+    }
+
+    // 与请求侧保持一致：200 ~ 1200，避免填了却静默被改写
+    _maxTokens = _maxTokens.clamp(200, 1200);
+    if (_maxTokensController.text != _maxTokens.toString()) {
+      _maxTokensController.text = _maxTokens.toString();
+    }
+
     storage.setApiKey(_apiKeyController.text.trim());
     storage.setModel(_modelController.text.trim());
     storage.setBaseUrl(normalizedUrl);
@@ -85,6 +135,18 @@ class _SettingsPageState extends State<SettingsPage> {
     storage.setTemperature(_temperature);
     storage.setMaxTokens(_maxTokens);
     storage.setTopP(_topP);
+    // 自定义 API 配置：无论当前是否选中自定义都存下来，切回时可直接用
+    if (_isCustomProvider) {
+      storage.setCustomBaseUrl(normalizedUrl);
+      storage.setCustomModel(_modelController.text.trim());
+      storage.setCustomExtraHeadersRaw(headersRaw);
+      storage.setCustomSupportsVision(_customSupportsVision);
+    } else {
+      storage.setCustomExtraHeadersRaw(headersRaw);
+      storage.setCustomSupportsVision(_customSupportsVision);
+    }
+    // 透明度实时同步给已开启的悬浮窗（保存后再次确认）
+    FloatWindowService.updateOpacity(_opacity);
     AppToast.show(context, '保存成功');
   }
 
@@ -512,6 +574,7 @@ class _SettingsPageState extends State<SettingsPage> {
         _temperature = temp;
         _maxTokens = tokens;
         _topP = topP;
+        _maxTokensController.text = tokens.toString();
       }),
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
@@ -539,6 +602,8 @@ class _SettingsPageState extends State<SettingsPage> {
     _apiKeyController.dispose();
     _modelController.dispose();
     _baseUrlController.dispose();
+    _customHeadersController.dispose();
+    _maxTokensController.dispose();
     super.dispose();
   }
 
@@ -632,6 +697,48 @@ class _SettingsPageState extends State<SettingsPage> {
                                 hintStyle: TextStyle(color: AppTheme.textMuted.withOpacity(0.4)),
                               ),
                             ),
+                            // v2.4：仅自定义服务商显示额外配置
+                            if (_isCustomProvider) ...[
+                              const SizedBox(height: 16),
+                              TextField(
+                                controller: _customHeadersController,
+                                maxLines: 3,
+                                minLines: 2,
+                                style: const TextStyle(
+                                  color: AppTheme.textPrimary,
+                                  fontSize: 13,
+                                  fontFamily: 'monospace',
+                                ),
+                                decoration: InputDecoration(
+                                  labelText: '额外请求头（可选）',
+                                  labelStyle: const TextStyle(color: AppTheme.textMuted),
+                                  prefixIcon: const Icon(Icons.tune, color: AppTheme.textMuted, size: 20),
+                                  hintText: '{"X-Api-Version":"1"}',
+                                  hintStyle: TextStyle(color: AppTheme.textMuted.withOpacity(0.4)),
+                                  helperText: 'JSON 对象格式，会附加到所有请求头；留空则不额外发送',
+                                  helperStyle: TextStyle(
+                                    color: AppTheme.textMuted.withOpacity(0.7),
+                                    fontSize: 11,
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(height: 8),
+                              SwitchListTile(
+                                contentPadding: EdgeInsets.zero,
+                                value: _customSupportsVision,
+                                title: const Text(
+                                  '支持图片（视觉）',
+                                  style: TextStyle(color: AppTheme.textPrimary, fontSize: 14),
+                                ),
+                                subtitle: Text(
+                                  _customSupportsVision
+                                      ? '会把截图作为图片传给该接口'
+                                      : '只发文本，接口不需要多模态能力',
+                                  style: const TextStyle(color: AppTheme.textMuted, fontSize: 12),
+                                ),
+                                onChanged: (v) => setState(() => _customSupportsVision = v),
+                              ),
+                            ],
                           ],
                         ),
                       ),
@@ -776,7 +883,7 @@ class _SettingsPageState extends State<SettingsPage> {
                                   SizedBox(
                                     width: 80,
                                     child: TextField(
-                                      controller: TextEditingController(text: _maxTokens.toString()),
+                                      controller: _maxTokensController,
                                       keyboardType: TextInputType.number,
                                       style: const TextStyle(color: AppTheme.textPrimary, fontSize: 13, fontFamily: 'monospace'),
                                       textAlign: TextAlign.right,
@@ -787,7 +894,8 @@ class _SettingsPageState extends State<SettingsPage> {
                                       ),
                                       onChanged: (v) {
                                         final n = int.tryParse(v);
-                                        if (n != null && n > 0 && n <= 8000) {
+                                        // 留空/非法时保留上次有效值，避免保存成 0
+                                        if (n != null && n >= 200 && n <= 1200) {
                                           setState(() => _maxTokens = n);
                                         }
                                       },
@@ -826,7 +934,11 @@ class _SettingsPageState extends State<SettingsPage> {
                               divisions: 14,
                               activeColor: AppTheme.accentStart,
                               inactiveColor: AppTheme.textMuted.withOpacity(0.15),
-                              onChanged: (v) => setState(() => _opacity = v),
+                              onChanged: (v) {
+                                setState(() => _opacity = v);
+                                // v2.4：拖动即时生效，不用等保存/重开悬浮窗
+                                FloatWindowService.updateOpacity(v);
+                              },
                             ),
                           ],
                         ),
@@ -872,7 +984,14 @@ class _SettingsPageState extends State<SettingsPage> {
                             const Divider(height: 24),
                             _buildInfoRow('当前服务商', _currentProviderName),
                             const Divider(height: 24),
-                            _buildInfoRow('支持视觉', StorageService().supportsVision ? '✓ 是' : '✗ 否'),
+                            _buildInfoRow(
+                              '支持视觉',
+                              (_isCustomProvider
+                                      ? _customSupportsVision
+                                      : (StorageService().supportsVision))
+                                  ? '✓ 是'
+                                  : '✗ 否',
+                            ),
                           ],
                         ),
                       ),
@@ -957,7 +1076,9 @@ class _SettingsPageState extends State<SettingsPage> {
             final id = provider['id'] as String;
             final name = provider['name'] as String;
             final isSelected = id == _selectedProviderId;
-            final supportsVision = provider['supports_vision'] as bool;
+            final supportsVision = id == 'custom'
+                ? _customSupportsVision
+                : provider['supports_vision'] as bool;
 
             return GestureDetector(
               onTap: () => _onProviderChanged(id),
@@ -1009,7 +1130,9 @@ class _SettingsPageState extends State<SettingsPage> {
     if (provider == null) return const SizedBox.shrink();
 
     final desc = provider['desc'] as String?;
-    final supportsVision = provider['supports_vision'] as bool;
+    final supportsVision = _selectedProviderId == 'custom'
+        ? _customSupportsVision
+        : provider['supports_vision'] as bool;
 
     return Container(
       width: double.infinity,

@@ -7,6 +7,7 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
+import android.graphics.Rect
 import android.graphics.PixelFormat
 import android.graphics.drawable.GradientDrawable
 import android.hardware.display.DisplayManager
@@ -43,6 +44,16 @@ import java.io.ByteArrayOutputStream
 import java.nio.ByteBuffer
 
 class FloatWindowService : Service() {
+    companion object {
+        const val PREFS_NAME = "ChatMindPrefs"
+        const val KEY_FLOAT_OPACITY = "floatOpacity"
+
+        /** 供 MainActivity 调用，实现悬浮窗透明度实时生效 */
+        @Volatile
+        var instance: FloatWindowService? = null
+            private set
+    }
+
     private val TAG = "FloatWindowService"
     private val SCREENSHOT_CHANNEL = "com.chatmind/screenshot"
 
@@ -69,6 +80,14 @@ class FloatWindowService : Service() {
     private var panelX = 0
     private var panelY = 200
 
+    // v2.4：键盘避让状态
+    private var ballParams: WindowManager.LayoutParams? = null
+    private var resultPanelParams: WindowManager.LayoutParams? = null
+    /// 悬浮球被键盘抬起前的原始位置，键盘收起后回弹
+    private var ballRestoreY = -1
+    /// Flutter 侧上报的键盘高度（物理像素），比窗口 insets 更可靠
+    private var imePxOverride = 0
+
     private var currentScene = "职场"
     private var currentPsychology = ""
     private var currentIntention = ""
@@ -83,7 +102,12 @@ class FloatWindowService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        instance = this
         windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
+        // 读取上次保存的悬浮窗透明度，保证重启后显示一致
+        panelOpacity = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .getFloat(KEY_FLOAT_OPACITY, panelOpacity)
+            .coerceIn(0.3f, 1f)
         startForegroundService()
     }
 
@@ -112,6 +136,177 @@ class FloatWindowService : Service() {
 
     override fun onBind(intent: Intent?): IBinder? = null
 
+    // ==================== v2.4：透明度实时生效 + 键盘避让 ====================
+
+    /**
+     * 实时应用悬浮窗透明度（0.3 ~ 1.0）。
+     * 悬浮球与结果面板立即生效，同时写入 SharedPreferences 供下次显示沿用。
+     */
+    fun applyOpacity(opacity: Float) {
+        val value = opacity.coerceIn(0.3f, 1f)
+        panelOpacity = value
+        try {
+            getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                .edit()
+                .putFloat(KEY_FLOAT_OPACITY, value)
+                .apply()
+        } catch (e: Exception) {
+            Log.e(TAG, "保存透明度失败 - ${e.message}")
+        }
+        Handler(Looper.getMainLooper()).post {
+            try {
+                floatBallView?.let { if (it.isAttachedToWindow) it.alpha = value }
+                resultPanelView?.let { if (it.isAttachedToWindow) it.alpha = value }
+            } catch (e: Exception) {
+                Log.e(TAG, "应用透明度失败 - ${e.message}")
+            }
+        }
+    }
+
+    /** 屏幕真实高度（含导航栏），用于判断键盘占位 */
+    private fun realScreenHeight(): Int {
+        return try {
+            val wm = windowManager
+            if (wm != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                wm.maximumWindowMetrics.bounds.height()
+            } else if (wm != null) {
+                val metrics = DisplayMetrics()
+                @Suppress("DEPRECATION")
+                wm.defaultDisplay.getRealMetrics(metrics)
+                metrics.heightPixels
+            } else {
+                resources.displayMetrics.heightPixels
+            }
+        } catch (e: Exception) {
+            resources.displayMetrics.heightPixels
+        }
+    }
+
+    /**
+     * 当前软键盘高度，未弹出时返回 0。
+     * API 30+ 用 WindowInsets.Type.ime()，低版本退回「屏幕高 - 可见区域底部」的差值，
+     * 小于屏高 15% 的差值按导航栏处理，避免误判。
+     */
+    private fun imeHeight(view: View): Int {
+        val screenHeight = realScreenHeight()
+        var ime = imePxOverride.coerceAtLeast(0)
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                val insets = view.rootWindowInsets
+                if (insets != null) {
+                    ime = insets.getInsets(android.view.WindowInsets.Type.ime()).bottom
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "读取输入法 insets 失败 - ${e.message}")
+        }
+        if (ime <= 0) {
+            try {
+                val visible = Rect()
+                view.getWindowVisibleDisplayFrame(visible)
+                val gap = screenHeight - visible.bottom
+                if (gap > 0) ime = gap
+            } catch (e: Exception) {
+                Log.e(TAG, "读取可见区域失败 - ${e.message}")
+            }
+        }
+        return if (ime > screenHeight * 0.15f) ime else 0
+    }
+
+    /**
+     * 键盘避让：键盘弹出时把悬浮球/面板抬到键盘上方（留 8dp），
+     * 键盘收起后悬浮球回到原位，避免悬浮窗压住键盘导致点不到按键。
+     */
+    /**
+     * 把视图压到键盘上方（留 8dp）。键盘没弹出时不做任何事。
+     * 返回视图是否被移动过。
+     */
+    private fun clampAboveIme(
+        view: View,
+        params: WindowManager.LayoutParams,
+        remember: Boolean = true,
+    ): Boolean {
+        try {
+            if (!view.isAttachedToWindow || view.height == 0) return false
+            val ime = imeHeight(view)
+            if (ime <= 0) return false
+            val margin = (8 * resources.displayMetrics.density).toInt()
+            val limit = realScreenHeight() - ime - margin
+            val overflow = params.y + view.height - limit
+            if (overflow <= 0) return false
+            if (remember && ballRestoreY < 0) {
+                ballRestoreY = params.y
+            }
+            val targetY = (params.y - overflow).coerceAtLeast(0)
+            if (params.y == targetY) return false
+            params.y = targetY
+            windowManager?.updateViewLayout(view, params)
+            return true
+        } catch (e: Exception) {
+            Log.e(TAG, "键盘避让失败 - ${e.message}")
+            return false
+        }
+    }
+
+    /** 键盘收起后把悬浮球放回抬起前的位置（用户没拖动过时才回弹） */
+    private fun restoreBallIfMoved(view: View, params: WindowManager.LayoutParams) {
+        if (ballRestoreY < 0) return
+        params.y = ballRestoreY
+        ballRestoreY = -1
+        windowManager?.updateViewLayout(view, params)
+    }
+
+    /**
+     * Flutter 侧上报软键盘高度（物理像素）。
+     * 悬浮窗运行在其他 App 之上时读不到 IME insets，用宿主 Activity 上报的值最准。
+     */
+    fun applyImeHeight(heightPx: Int) {
+        imePxOverride = heightPx.coerceAtLeast(0)
+        Handler(Looper.getMainLooper()).post {
+            try {
+                ballParams?.let { params ->
+                    floatBallView?.let { ball ->
+                        if (imePxOverride > 0) {
+                            clampAboveIme(ball, params)
+                        } else {
+                            restoreBallIfMoved(ball, params)
+                        }
+                    }
+                }
+                resultPanelParams?.let { params ->
+                    resultPanelView?.let { panel ->
+                        if (imePxOverride > 0) {
+                            clampAboveIme(panel, params, remember = false)
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "应用键盘高度失败 - ${e.message}")
+            }
+        }
+    }
+
+    private fun attachImeAvoidance(
+        view: View,
+        params: WindowManager.LayoutParams,
+        isPanel: Boolean,
+    ) {
+        view.viewTreeObserver.addOnGlobalLayoutListener {
+            try {
+                val ime = imeHeight(view)
+                if (ime > 0) {
+                    // 面板每次都要贴到键盘上方；悬浮球记住抬起前的位置
+                    clampAboveIme(view, params, remember = !isPanel)
+                } else if (!isPanel) {
+                    // 键盘收起：没被用户重新拖动过就回到原位
+                    restoreBallIfMoved(view, params)
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "键盘避让失败 - ${e.message}")
+            }
+        }
+    }
+
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent != null) {
             val action = intent.action
@@ -134,6 +329,8 @@ class FloatWindowService : Service() {
                 isAnalyzing = false
                 updatePanelContent()
                 showMainPanel()
+            } else if (action == "SET_OPACITY") {
+                applyOpacity(intent.getFloatExtra("opacity", panelOpacity))
             } else if (action == "HIDE_RESULT") {
                 hideResultPanel()
             } else if (action == "START_SCREENSHOT") {
@@ -452,7 +649,9 @@ class FloatWindowService : Service() {
                     WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
                 else
                     WindowManager.LayoutParams.TYPE_SYSTEM_ALERT,
-                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                    WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
+                    WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
                 PixelFormat.TRANSLUCENT
             ).apply {
                 gravity = Gravity.TOP or Gravity.START
@@ -478,6 +677,8 @@ class FloatWindowService : Service() {
                         if (kotlin.math.abs(event.rawX - touchX) > 10 || kotlin.math.abs(event.rawY - touchY) > 10) {
                             params.x = initialX + (event.rawX - touchX).toInt()
                             params.y = initialY + (event.rawY - touchY).toInt()
+                            // 用户手动拖过，键盘收起后不再回弹
+                            ballRestoreY = -1
                             windowManager!!.updateViewLayout(ball, params)
                         }
                         true
@@ -494,6 +695,8 @@ class FloatWindowService : Service() {
                             val targetX = if (params.x + 60 < displayWidth / 2) 0 else displayWidth - 120
                             params.x = targetX
                             windowManager!!.updateViewLayout(ball, params)
+                            // 拖完仍压在键盘上就抬回去，免得挡住按键
+                            clampAboveIme(ball, params)
                         }
                         true
                     }
@@ -501,8 +704,11 @@ class FloatWindowService : Service() {
                 }
             }
 
+            ball.alpha = panelOpacity
             windowManager!!.addView(ball, params)
             floatBallView = ball
+            ballParams = params
+            attachImeAvoidance(ball, params, false)
         } catch (e: Exception) {
             Log.e(TAG, "显示悬浮球失败 - ${e.message}")
         }
@@ -744,6 +950,7 @@ class FloatWindowService : Service() {
                 else
                     WindowManager.LayoutParams.TYPE_SYSTEM_ALERT,
                 WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
+                    WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                     WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
                 PixelFormat.TRANSLUCENT
             ).apply {
@@ -890,6 +1097,8 @@ class FloatWindowService : Service() {
                     MotionEvent.ACTION_UP -> {
                         isDragging = false
                         resizeCorner = 0
+                        // 松手后若被键盘压住，抬到键盘上方
+                        clampAboveIme(view, params, remember = false)
                     }
                 }
                 // 如果在ScrollView区域内且不在角落，返回false让ScrollView处理滚动
@@ -902,6 +1111,8 @@ class FloatWindowService : Service() {
 
             windowManager!!.addView(panel, params)
             resultPanelView = panel
+            resultPanelParams = params
+            attachImeAvoidance(panel, params, true)
             isPanelShowing = true
         } catch (e: Exception) {
             Log.e(TAG, "显示主面板失败 - ${e.message}")
@@ -1172,6 +1383,7 @@ class FloatWindowService : Service() {
     }
 
     override fun onDestroy() {
+        instance = null
         isPanelShowing = false
         hideFloatBall()
         hideResultPanelInternal()

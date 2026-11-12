@@ -31,6 +31,37 @@ class AppState extends ChangeNotifier {
   }
 }
 
+/// 监听软键盘高度并上报原生悬浮窗服务。
+/// 只在高度变化时发一次，键盘收起时上报 0 让悬浮窗归位。
+class ImeHeightReporter extends StatefulWidget {
+  const ImeHeightReporter({super.key, required this.child});
+
+  final Widget? child;
+
+  @override
+  State<ImeHeightReporter> createState() => _ImeHeightReporterState();
+}
+
+class _ImeHeightReporterState extends State<ImeHeightReporter> {
+  int _lastHeight = 0;
+
+  @override
+  Widget build(BuildContext context) {
+    final metrics = MediaQuery.maybeOf(context);
+    if (metrics != null) {
+      final px = (metrics.viewInsets.bottom * metrics.devicePixelRatio).round();
+      if (px != _lastHeight) {
+        _lastHeight = px;
+        // 下一帧再发，避免在 build 期间触发通道调用
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          FloatWindowService.updateImeHeight(px);
+        });
+      }
+    }
+    return widget.child ?? const SizedBox.shrink();
+  }
+}
+
 class ChatMindApp extends StatelessWidget {
   const ChatMindApp({super.key});
 
@@ -42,6 +73,8 @@ class ChatMindApp extends StatelessWidget {
         title: 'ChatMind',
         debugShowCheckedModeBanner: false,
         theme: AppTheme.darkTheme,
+        // v2.4：把软键盘高度同步给原生悬浮窗，避免悬浮球/面板压住键盘
+        builder: (context, child) => ImeHeightReporter(child: child),
         home: Consumer<AppState>(
           builder: (context, state, _) {
             if (!state.initialized) {

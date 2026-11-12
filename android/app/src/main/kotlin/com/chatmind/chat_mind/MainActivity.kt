@@ -170,7 +170,38 @@ class MainActivity : FlutterActivity() {
                         startService(intent)
                         result.success(true)
                     }
-                    "updateOpacity" -> result.success(true)
+                    "updateImeHeight" -> {
+                        // v2.4：Flutter 上报软键盘高度（物理像素），用于悬浮窗键盘避让
+                        try {
+                            val heightPx = (call.argument<Int>("height") ?: 0).coerceAtLeast(0)
+                            FloatWindowService.instance?.applyImeHeight(heightPx)
+                            result.success(true)
+                        } catch (e: Exception) {
+                            Log.e(TAG, "上报键盘高度失败 - ${e.message}")
+                            result.success(false)
+                        }
+                    }
+                    "updateOpacity" -> {
+                        // v2.4：透明度实时生效。服务在跑就直接改视图；没跑就只落盘，
+                        // 等下次显示悬浮窗时读取，避免为此拉起前台服务。
+                        try {
+                            val opacity = (call.argument<Double>("opacity") ?: 0.9).toFloat()
+                                .coerceIn(0.3f, 1f)
+                            val service = FloatWindowService.instance
+                            if (service != null) {
+                                service.applyOpacity(opacity)
+                            } else {
+                                getSharedPreferences(FloatWindowService.PREFS_NAME, Context.MODE_PRIVATE)
+                                    .edit()
+                                    .putFloat(FloatWindowService.KEY_FLOAT_OPACITY, opacity)
+                                    .apply()
+                            }
+                            result.success(true)
+                        } catch (e: Exception) {
+                            Log.e(TAG, "更新悬浮窗透明度失败 - ${e.message}")
+                            result.success(false)
+                        }
+                    }
                     else -> result.notImplemented()
                 }
             }
