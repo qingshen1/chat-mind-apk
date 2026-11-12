@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:typed_data';
 import 'package:http/http.dart' as http;
 import '../models/analysis_result.dart';
+import '../models/test_connection_result.dart';
 import '../utils/constants.dart';
 import 'storage_service.dart';
 

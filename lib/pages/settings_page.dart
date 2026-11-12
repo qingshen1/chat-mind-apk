@@ -4,6 +4,7 @@ import '../utils/theme.dart';
 import '../utils/toast.dart';
 import '../utils/constants.dart';
 import '../services/storage_service.dart';
+import '../models/test_connection_result.dart';
 import '../services/ai_service.dart';
 import 'values_editor_page.dart';
 
@@ -24,6 +25,12 @@ class _SettingsPageState extends State<SettingsPage> {
   bool _isCustomProvider = false;
   bool _isFetchingModels = false;
   bool _isTestingConnection = false;
+
+  // v2.2 模型生成参数
+  late double _temperature;
+  late int _maxTokens;
+  late double _topP;
+  bool _showAdvanced = false;
 
   @override
   void initState() {
@@ -67,6 +74,9 @@ class _SettingsPageState extends State<SettingsPage> {
     storage.setBaseUrl(_baseUrlController.text.trim());
     storage.setApiProvider(_selectedProviderId);
     storage.setOpacity(_opacity);
+    storage.setTemperature(_temperature);
+    storage.setMaxTokens(_maxTokens);
+    storage.setTopP(_topP);
     AppToast.show(context, '保存成功');
   }
 

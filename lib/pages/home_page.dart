@@ -118,11 +118,11 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
     }
   }
 
-  void _showResultDialog(AnalysisResult result) {
+  void _showResultDialog(AnalysisResult result, {required String scene}) {
     showDialog(
       context: context,
       barrierDismissible: false,
-      builder: (ctx) => AnalysisResultDialog(result: result),
+      builder: (ctx) => AnalysisResultDialog(result: result, scene: scene),
     );
   }
 
