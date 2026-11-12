@@ -121,17 +121,65 @@ class Constants {
     }
   }
 
-  /// 从 chat/completions 端点 URL 推导出 models 列表 URL
-  /// 例: https://api.openai.com/v1/chat/completions → https://api.openai.com/v1/models
-  static String deriveModelsUrl(String chatCompletionsUrl) {
-    // 标准 OpenAI 兼容路径：直接替换 /chat/completions → /models
-    if (chatCompletionsUrl.contains('/chat/completions')) {
-      return chatCompletionsUrl.replaceAll('/chat/completions', '/models');
+  /// 规范化用户填写的 API 地址，补全成完整的 chat/completions 端点。
+  ///
+  /// 用户常常只填到版本号，直接发请求会 404，这里统一补全：
+  /// - `https://api.x.com`                     → `https://api.x.com/v1/chat/completions`
+  /// - `https://api.x.com/v1` / `.../v1/`      → `https://api.x.com/v1/chat/completions`
+  /// - `https://api.x.com/v1/chat/completions` → 原样返回
+  /// - 其它无法识别的完整路径 → 原样返回，避免拼出更错的地址
+  static String normalizeChatUrl(String raw) {
+    var url = raw.trim();
+    if (url.isEmpty) return url;
+    while (url.endsWith('/')) {
+      url = url.substring(0, url.length - 1);
     }
-    // 兜底：去掉最后一段路径，追加 /models
-    final uri = Uri.parse(chatCompletionsUrl);
-    final segments = uri.pathSegments.toList();
-    if (segments.isNotEmpty) {
+
+    final lower = url.toLowerCase();
+    if (lower.endsWith('/chat/completions') || lower.endsWith('/completions')) {
+      return url;
+    }
+
+    final uri = Uri.tryParse(url);
+    if (uri == null || !uri.hasScheme || uri.host.isEmpty) return url;
+
+    final segments = uri.pathSegments.where((s) => s.isNotEmpty).toList();
+
+    // 只填了域名：补默认 v1 前缀
+    if (segments.isEmpty) {
+      return '$url/v1/chat/completions';
+    }
+
+    // 路径以版本号结尾（/v1、/v3、/v4、/api/paas/v4…）：直接补接口名
+    if (RegExp(r'^v\d+$').hasMatch(segments.last)) {
+      return '$url/chat/completions';
+    }
+
+    // 其它情况保守处理，原样返回
+    return url;
+  }
+
+  /// 从 chat/completions 端点 URL 推导出 models 列表 URL。
+  ///
+  /// 例: `https://api.openai.com/v1` → `https://api.openai.com/v1/models`
+  static String deriveModelsUrl(String rawChatUrl) {
+    final chatUrl = normalizeChatUrl(rawChatUrl);
+    final lower = chatUrl.toLowerCase();
+
+    const chatSuffix = '/chat/completions';
+    if (lower.endsWith(chatSuffix)) {
+      return chatUrl.substring(0, chatUrl.length - chatSuffix.length) + '/models';
+    }
+    const compSuffix = '/completions';
+    if (lower.endsWith(compSuffix)) {
+      return chatUrl.substring(0, chatUrl.length - compSuffix.length) + '/models';
+    }
+
+    // 兜底：路径末尾是版本号则保留，否则去掉最后一段，再追加 /models
+    final uri = Uri.tryParse(chatUrl);
+    if (uri == null || uri.host.isEmpty) return chatUrl;
+    final segments = uri.pathSegments.where((s) => s.isNotEmpty).toList();
+    if (segments.isNotEmpty && !RegExp(r'^v\d+$').hasMatch(segments.last)) {
       segments.removeLast();
     }
     segments.add('models');

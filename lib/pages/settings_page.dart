@@ -69,9 +69,16 @@ class _SettingsPageState extends State<SettingsPage> {
 
   void _save() {
     final storage = StorageService();
+
+    // 自动补全 /chat/completions，避免只填到 /v1 时请求 404
+    final normalizedUrl = Constants.normalizeChatUrl(_baseUrlController.text.trim());
+    if (normalizedUrl != _baseUrlController.text.trim()) {
+      _baseUrlController.text = normalizedUrl;
+    }
+
     storage.setApiKey(_apiKeyController.text.trim());
     storage.setModel(_modelController.text.trim());
-    storage.setBaseUrl(_baseUrlController.text.trim());
+    storage.setBaseUrl(normalizedUrl);
     storage.setApiProvider(_selectedProviderId);
     storage.setOpacity(_opacity);
     storage.setTemperature(_temperature);

@@ -75,8 +75,10 @@ class AIService {
     };
 
     // 发送请求
+    // 自动补全 /chat/completions，避免用户只填到 /v1 时 404
+    final endpoint = Constants.normalizeChatUrl(baseUrl);
     final response = await http.post(
-      Uri.parse(baseUrl),
+      Uri.parse(endpoint),
       headers: headers,
       body: jsonEncode(requestBody),
     ).timeout(
@@ -143,6 +145,15 @@ class AIService {
     );
 
     if (response.statusCode != 200) {
+      // 404/405：多数第三方 / 中转站不开放 /models 接口，这不代表配置错了
+      if (response.statusCode == 404 || response.statusCode == 405) {
+        throw Exception(
+          '该服务商没有开放模型列表接口（HTTP ${response.statusCode}）。\n\n'
+          '这不影响正常使用，请直接在「模型名称」里手动填写你要用的模型，'
+          '例如 gpt-4o、claude-3-5-sonnet、deepseek-chat 等。\n\n'
+          '已尝试地址：$modelsUrl',
+        );
+      }
       String errMsg;
       try {
         final errData = jsonDecode(utf8.decode(response.bodyBytes));
@@ -152,7 +163,7 @@ class AIService {
       } catch (_) {
         errMsg = utf8.decode(response.bodyBytes);
       }
-      throw Exception('获取模型列表失败 (${response.statusCode}): $errMsg');
+      throw Exception('获取模型列表失败 (${response.statusCode}): $errMsg\n已尝试地址：$modelsUrl');
     }
 
     final data = jsonDecode(utf8.decode(response.bodyBytes));
@@ -167,7 +178,11 @@ class AIService {
     }
 
     if (modelIds.isEmpty) {
-      throw Exception('未获取到可用模型，请检查 API 地址是否正确');
+      throw Exception(
+        '接口有响应但没有返回模型列表。\n\n'
+        '请直接在「模型名称」里手动填写模型名称。\n'
+        '已尝试地址：$modelsUrl',
+      );
     }
 
     modelIds.sort();
@@ -210,7 +225,7 @@ class AIService {
     final stopwatch = Stopwatch()..start();
 
     final response = await http.post(
-      Uri.parse(baseUrl),
+      Uri.parse(Constants.normalizeChatUrl(baseUrl)),
       headers: headers,
       body: jsonEncode(requestBody),
     ).timeout(
