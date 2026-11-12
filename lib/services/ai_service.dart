@@ -30,7 +30,12 @@ class AIService {
     }
 
     final base64Image = base64Encode(imageBytes);
-    final systemPrompt = _buildSystemPrompt(scene, baseValues, sceneValues);
+    final systemPrompt = _buildSystemPrompt(
+      scene,
+      baseValues,
+      sceneValues,
+      storage.lastSpeaker,
+    );
 
     // 构建请求体 —— 兼容 OpenAI 格式
     final List<dynamic> userContent;
@@ -148,7 +153,12 @@ class AIService {
     }
 
     final base64Image = base64Encode(imageBytes);
-    final systemPrompt = _buildSystemPrompt(scene, baseValues, sceneValues);
+    final systemPrompt = _buildSystemPrompt(
+      scene,
+      baseValues,
+      sceneValues,
+      storage.lastSpeaker,
+    );
 
     final List<dynamic> userContent;
     if (supportsVision) {
@@ -309,6 +319,14 @@ class AIService {
   static String _extractPreview(String text) {
     final parts = <String>[];
 
+    final otherMsg = _extractStringField(text, 'other_last_message');
+    if (otherMsg != null && otherMsg.isNotEmpty) {
+      parts.add('对方：$otherMsg');
+    }
+    final myMsg = _extractStringField(text, 'my_last_message');
+    if (myMsg != null && myMsg.isNotEmpty) {
+      parts.add('我：$myMsg');
+    }
     final psychology = _extractStringField(text, 'psychology');
     if (psychology != null && psychology.isNotEmpty) {
       parts.add('对方心理：$psychology');
@@ -491,16 +509,27 @@ class AIService {
     String scene,
     List<String> baseValues,
     Map<String, String> sceneValues,
+    String lastSpeaker,
   ) {
     final buffer = StringBuffer();
-    buffer.writeln('你是一位资深心理咨询师和高情商沟通顾问。');
+    buffer.writeln('你是一位资深心理咨询师和高情商沟通顾问，正在帮用户想「接下来该怎么回」。');
     buffer.writeln('当前场景：$scene');
     buffer.writeln();
 
+    // ===== 第一步：分清说话人，这是分析能否落地的前提 =====
+    buffer.writeln('【第一步：先分清谁说的话，再谈分析】');
+    buffer.writeln('- 气泡位置：通常在右侧（多为绿色）的是「用户本人」发出的消息；在左侧（多为白色或灰色）的是「对方」发来的消息。');
+    buffer.writeln('- 结合头像位置、昵称、时间戳等线索综合判断。');
+    if (lastSpeaker == 'me') {
+      buffer.writeln('- 用户已确认：截图中最后一条消息是「用户本人」发出的。');
+    } else {
+      buffer.writeln('- 用户已确认：截图中最后一条消息是「对方」发给用户的。');
+    }
+    buffer.writeln('- 如果视觉观察与用户说法冲突，以视觉观察为准，并在 speaker_note 里说明差异。');
+    buffer.writeln();
+
     if (baseValues.isNotEmpty) {
-      // 将 id 转为可读文本
       final valueTexts = baseValues.map((id) {
-        // 尝试从预设列表中找到对应文本
         try {
           return '${baseValuesMap[id] ?? id}';
         } catch (_) {
@@ -517,18 +546,25 @@ class AIService {
       buffer.writeln();
     }
 
-    buffer.writeln('分析要求：');
-    buffer.writeln('1. 判断对方心理状态与真实意图');
-    buffer.writeln('2. 识别风险（PUA、情感操控、职场施压等）');
-    buffer.writeln('3. 给出 2 条符合价值观的回复建议');
+    buffer.writeln('【第二步：复述对话】');
+    buffer.writeln('在 other_last_message 里原样写出你能看到的「对方」最后一条消息，');
+    buffer.writeln('在 my_last_message 里原样写出「用户本人」最后一条消息，看不到就填空字符串。');
     buffer.writeln();
+
+    buffer.writeln('【第三步：分析并给回复】');
+    buffer.writeln('- psychology 与 intention 只针对「对方」，要结合整段对话判断，不要只解读最后一句的字面意思。');
+    buffer.writeln('- replies 必须是「用户本人」要回给「对方」的话，要承接对方那条消息，不要答非所问。');
+    buffer.writeln('- 如果看不清或无法判断归属，在 speaker_note 里如实说明，不要臆测。');
+    buffer.writeln();
+
     buffer.writeln('严格按此 JSON 格式输出，不要任何解释、不要 markdown 代码块：');
     buffer.writeln(
-      '{"psychology":"心理状态","intention":"意图","risk_warning":"风险，无则空字符串","replies":[{"style":"风格","content":"回复内容"}]}',
+      '{"other_last_message":"对方最后一条消息原文","my_last_message":"用户最后一条消息原文","psychology":"心理状态","intention":"真实意图","risk_warning":"风险，无则空字符串","speaker_note":"归属判断依据或不确定说明","replies":[{"style":"风格","content":"回复内容"}]}',
     );
     buffer.writeln();
-    // 篇幅约束：输出越长等待越久，这里做硬性限制
     buffer.writeln('篇幅要求（必须遵守，直接影响响应速度）：');
+    buffer.writeln('- other_last_message / my_last_message 原样摘录，各不超过 40 字');
+    buffer.writeln('- speaker_note 不超过 20 字');
     buffer.writeln('- psychology 与 intention 各不超过 40 字');
     buffer.writeln('- risk_warning 不超过 25 字，无风险填 ""');
     buffer.writeln('- replies 固定 2 条，style 不超过 6 字，content 不超过 50 字');

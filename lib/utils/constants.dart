@@ -1,7 +1,7 @@
 
 class Constants {
   static const String appName = 'ChatMind';
-  static const String appVersion = '2.2.0';
+  static const String appVersion = '2.3.0';
 
   // SharedPreferences keys
   static const String prefApiKey = 'api_key';
@@ -22,6 +22,8 @@ class Constants {
   static const String prefTemplates = 'reply_templates';
   static const String prefTokenStats = 'token_stats';
   static const String prefKeyMigrated = 'key_migrated';
+  // v2.3 新增：截图中最后一条消息的发送者
+  static const String prefLastSpeaker = 'last_speaker';
 
   // Default values
   static const String defaultModel = 'doubao-1.5-vision-pro-32k';
@@ -31,6 +33,9 @@ class Constants {
   static const double defaultTemperature = 0.3;
   static const int defaultMaxTokens = 800;
   static const double defaultTopP = 1.0;
+
+  // v2.3：最后一条消息的发送者，'other'=对方（默认）, 'me'=我
+  static const String defaultLastSpeaker = 'other';
 
   /// 各服务商 Token 单价（元 / 百万 tokens，混合输入输出均价）
   /// 用于费用粗略估算，仅供参考

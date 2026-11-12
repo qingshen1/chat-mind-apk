@@ -24,6 +24,7 @@ class HomePage extends StatefulWidget {
 
 class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
   String _currentScene = Constants.scenes.first;
+  String _lastSpeaker = Constants.defaultLastSpeaker;
   bool _isAnalyzing = false;
   AnalysisProgress? _streamProgress;
   DateTime? _analyzeStartAt;
@@ -36,6 +37,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
   void initState() {
     super.initState();
     _currentScene = StorageService().currentScene;
+    _lastSpeaker = StorageService().lastSpeaker;
     _screenshotSub = ScreenshotService.selectionComplete.listen((data) {
       _analyzeImage(data.image, scene: data.scene);
     });
@@ -59,6 +61,87 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
   void _setScene(String scene) {
     setState(() => _currentScene = scene);
     StorageService().setScene(scene);
+  }
+
+  /// 切换「最后一条消息是谁发的」，直接影响 AI 对说话人的判断
+  void _setLastSpeaker(String speaker) {
+    setState(() => _lastSpeaker = speaker);
+    StorageService().setLastSpeaker(speaker);
+  }
+
+  /// 最后一条消息的发送者选择器（v2.3）
+  Widget _buildSpeakerSelector() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            const Icon(Icons.record_voice_over_outlined, size: 16, color: AppTheme.accentPink),
+            const SizedBox(width: 6),
+            const Text(
+              '最后一条消息是谁发的',
+              style: TextStyle(fontSize: 14, color: AppTheme.textSecondary),
+            ),
+          ],
+        ),
+        const SizedBox(height: 10),
+        Row(
+          children: [
+            _buildSpeakerChip('对方', 'other', '对方刚发了消息，AI 帮你回'),
+            const SizedBox(width: 10),
+            _buildSpeakerChip('我', 'me', '你刚发了消息，AI 帮你接话'),
+          ],
+        ),
+        const SizedBox(height: 8),
+        Text(
+          _lastSpeaker == 'me'
+              ? '当前：最后一条是你说的，回复建议将承接你的话'
+              : '当前：最后一条是对方说的，回复建议将针对对方那条',
+          style: const TextStyle(fontSize: 11, color: AppTheme.textMuted),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildSpeakerChip(String label, String value, String hint) {
+    final isSelected = _lastSpeaker == value;
+    return Expanded(
+      child: GestureDetector(
+        onTap: () => _setLastSpeaker(value),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 200),
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+          decoration: BoxDecoration(
+            gradient: isSelected ? AppTheme.accentGradient : null,
+            color: isSelected ? null : AppTheme.bgCard,
+            borderRadius: BorderRadius.circular(14),
+            border: isSelected ? null : Border.all(color: Colors.white.withOpacity(0.08)),
+            boxShadow: isSelected ? AppTheme.accentGlow : null,
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                label,
+                style: TextStyle(
+                  fontSize: 14,
+                  fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
+                  color: isSelected ? Colors.white : AppTheme.textSecondary,
+                ),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                hint,
+                style: TextStyle(
+                  fontSize: 10,
+                  color: isSelected ? Colors.white.withOpacity(0.85) : AppTheme.textMuted,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
   Future<void> _pickImage() async {
@@ -213,6 +296,8 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                         ],
                         const SizedBox(height: 24),
                       _buildSceneSelector(),
+                      const SizedBox(height: 20),
+                      _buildSpeakerSelector(),
                       const SizedBox(height: 24),
                       _buildMainButton(
                         icon: Icons.photo_library_outlined,
@@ -651,6 +736,13 @@ class _AnalysisResultDialogState extends State<AnalysisResultDialog> {
       buffer.writeln('⚠️ 风险预警：${result.riskWarning}');
       buffer.writeln();
     }
+    if (result.otherLastMessage != null && result.otherLastMessage!.isNotEmpty) {
+      buffer.writeln('👤 对方说：${result.otherLastMessage}');
+    }
+    if (result.myLastMessage != null && result.myLastMessage!.isNotEmpty) {
+      buffer.writeln('🙋 我说：${result.myLastMessage}');
+    }
+    buffer.writeln();
     buffer.writeln('💭 对方心理：${result.psychology}');
     buffer.writeln();
     buffer.writeln('🎯 对方意图：${result.intention}');
@@ -756,6 +848,39 @@ class _AnalysisResultDialogState extends State<AnalysisResultDialog> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
+                    if (result.hasSpeakerInfo) ...[
+                      _buildDialogueCard(),
+                      const SizedBox(height: 14),
+                    ] else ...[
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: AppTheme.warning.withOpacity(0.1),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: AppTheme.warning.withOpacity(0.3)),
+                        ),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Icon(Icons.info_outline, size: 16, color: AppTheme.warning),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                '这次没能识别出对话归属，分析可能偏表面。'
+                                '建议截取更完整的聊天记录（含最近几轮），再重新分析。',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  height: 1.5,
+                                  color: AppTheme.warning.withOpacity(0.95),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 14),
+                    ],
                     if (result.riskWarning != null && result.riskWarning!.isNotEmpty)
                       _buildRiskCard(result.riskWarning!),
                     _buildSectionCard(
@@ -947,6 +1072,104 @@ class _AnalysisResultDialogState extends State<AnalysisResultDialog> {
   }
 
   // ==================== 分析段落卡片 ====================
+
+  /// 展示模型识别到的对话双方（v2.3）
+  ///
+  /// 让用户一眼核对 AI 有没有把说话人搞反，避免盲目采信建议。
+  Widget _buildDialogueCard() {
+    final other = result.otherLastMessage;
+    final mine = result.myLastMessage;
+    if (!result.hasSpeakerInfo) return const SizedBox.shrink();
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: AppTheme.bgCard,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppTheme.accentCyan.withOpacity(0.25)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.forum_outlined, size: 16, color: AppTheme.accentCyan),
+              const SizedBox(width: 8),
+              const Text(
+                '识别到的对话',
+                style: TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                  color: AppTheme.textPrimary,
+                ),
+              ),
+              const Spacer(),
+              Text(
+                '认错了请重新截图',
+                style: TextStyle(fontSize: 10, color: AppTheme.textMuted.withOpacity(0.9)),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          if (other != null && other.isNotEmpty) _buildDialogueRow('对方', other, false),
+          if (other != null && other.isNotEmpty && mine != null && mine.isNotEmpty)
+            const SizedBox(height: 8),
+          if (mine != null && mine.isNotEmpty) _buildDialogueRow('我', mine, true),
+          if (result.speakerNote != null && result.speakerNote!.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            Text(
+              '判断依据：${result.speakerNote}',
+              style: const TextStyle(fontSize: 11, color: AppTheme.textMuted, height: 1.4),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  /// 一行对话气泡：isMe=true 时靠右显示
+  Widget _buildDialogueRow(String speaker, String text, bool isMe) {
+    return Row(
+      mainAxisAlignment: isMe ? MainAxisAlignment.end : MainAxisAlignment.start,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Flexible(
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+            decoration: BoxDecoration(
+              color: isMe
+                  ? AppTheme.accentStart.withOpacity(0.22)
+                  : Colors.white.withOpacity(0.06),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Column(
+              crossAxisAlignment:
+                  isMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+              children: [
+                Text(
+                  speaker,
+                  style: TextStyle(
+                    fontSize: 10,
+                    color: isMe ? AppTheme.accentCyan : AppTheme.textMuted,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  text,
+                  style: const TextStyle(
+                    fontSize: 13,
+                    color: AppTheme.textSecondary,
+                    height: 1.4,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
 
   Widget _buildSectionCard(String title, String content, IconData icon, Color iconColor) {
     return Container(

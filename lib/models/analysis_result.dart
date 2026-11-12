@@ -64,12 +64,26 @@ class AnalysisResult {
   final String? riskWarning;
   final TokenUsage? tokenUsage; // v2.2 新增
 
+  // ===== v2.3 新增：说话人识别 =====
+
+  /// 模型识别出的「对方」最后一条消息原文
+  final String? otherLastMessage;
+
+  /// 模型识别出的「你」最后一条消息原文
+  final String? myLastMessage;
+
+  /// 说话人归属的判断依据；不确定时模型会在此说明
+  final String? speakerNote;
+
   AnalysisResult({
     required this.psychology,
     required this.intention,
     required this.replies,
     this.riskWarning,
     this.tokenUsage,
+    this.otherLastMessage,
+    this.myLastMessage,
+    this.speakerNote,
   });
 
   factory AnalysisResult.fromJson(Map<String, dynamic> json) {
@@ -83,8 +97,23 @@ class AnalysisResult {
       tokenUsage: json['usage'] != null
           ? TokenUsage.fromJson(json['usage'] as Map<String, dynamic>)
           : null,
+      otherLastMessage: _asText(json['other_last_message']),
+      myLastMessage: _asText(json['my_last_message']),
+      speakerNote: _asText(json['speaker_note']),
     );
   }
+
+  /// 空字符串统一转成 null，避免界面出现空区块
+  static String? _asText(dynamic value) {
+    if (value == null) return null;
+    final text = value.toString().trim();
+    return text.isEmpty ? null : text;
+  }
+
+  /// 是否成功识别出对话双方
+  bool get hasSpeakerInfo =>
+      (otherLastMessage != null && otherLastMessage!.isNotEmpty) ||
+      (myLastMessage != null && myLastMessage!.isNotEmpty);
 }
 
 class ReplyOption {

@@ -96,6 +96,14 @@ class StorageService {
 
   // ==================== 悬浮窗设置 ====================
 
+  // ==================== v2.3 说话人设置 ====================
+
+  /// 截图中最后一条消息由谁发出：'other'=对方, 'me'=我
+  String get lastSpeaker =>
+      _prefs?.getString(Constants.prefLastSpeaker) ?? Constants.defaultLastSpeaker;
+  Future<void> setLastSpeaker(String value) =>
+      _prefs?.setString(Constants.prefLastSpeaker, value) ?? Future.value();
+
   double get floatOpacity => _prefs?.getDouble(Constants.prefOpacity) ?? 0.85;
   Future<void> setOpacity(double value) => _prefs?.setDouble(Constants.prefOpacity, value) ?? Future.value();
 
