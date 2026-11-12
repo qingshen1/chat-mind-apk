@@ -1,7 +1,7 @@
 name: chat_mind
 description: "ChatMind - AI聊天分析与回复助手"
 publish_to: 'none'
-version: 2.2.2+3
+version: 2.2.3+4
 
 environment:
   sdk: ^3.12.0

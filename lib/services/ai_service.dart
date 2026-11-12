@@ -52,7 +52,8 @@ class AIService {
 
     // v2.2: 从 StorageService 动态读取模型参数（不再硬编码）
     final temperature = storage.temperature;
-    final maxTokens = storage.maxTokens;
+    // 与流式保持一致的上限钳制
+    final maxTokens = storage.maxTokens.clamp(200, 1200).toInt();
     final topP = storage.topP;
 
     final requestBody = <String, dynamic>{
@@ -174,7 +175,8 @@ class AIService {
         {'role': 'user', 'content': userContent},
       ],
       'temperature': storage.temperature,
-      'max_tokens': storage.maxTokens,
+      // 上限钳制：分析结果用不到超长输出，过长会显著拖慢响应
+      'max_tokens': storage.maxTokens.clamp(200, 1200).toInt(),
       if (storage.topP < 1.0) 'top_p': storage.topP,
       'stream': true,
     };
@@ -516,14 +518,21 @@ class AIService {
     }
 
     buffer.writeln('分析要求：');
-    buffer.writeln('1. 分析对方心理状态、真实意图');
-    buffer.writeln('2. 检测风险（PUA、情感操控、职场施压等）');
-    buffer.writeln('3. 给出2-3个符合价值观的回复建议');
+    buffer.writeln('1. 判断对方心理状态与真实意图');
+    buffer.writeln('2. 识别风险（PUA、情感操控、职场施压等）');
+    buffer.writeln('3. 给出 2 条符合价值观的回复建议');
     buffer.writeln();
-    buffer.writeln('输出格式（严格JSON，不要输出其他内容）：');
+    buffer.writeln('严格按此 JSON 格式输出，不要任何解释、不要 markdown 代码块：');
     buffer.writeln(
-      '{"psychology":"心理状态","intention":"意图","risk_warning":"风险（无风险则为空字符串）","replies":[{"style":"风格","content":"回复内容"}]}',
+      '{"psychology":"心理状态","intention":"意图","risk_warning":"风险，无则空字符串","replies":[{"style":"风格","content":"回复内容"}]}',
     );
+    buffer.writeln();
+    // 篇幅约束：输出越长等待越久，这里做硬性限制
+    buffer.writeln('篇幅要求（必须遵守，直接影响响应速度）：');
+    buffer.writeln('- psychology 与 intention 各不超过 40 字');
+    buffer.writeln('- risk_warning 不超过 25 字，无风险填 ""');
+    buffer.writeln('- replies 固定 2 条，style 不超过 6 字，content 不超过 50 字');
+    buffer.writeln('- 只输出 JSON 本身，不要换行美化');
 
     return buffer.toString();
   }
@@ -558,11 +567,89 @@ class AIService {
       }
     }
 
-    final data = jsonDecode(jsonStr) as Map<String, dynamic>;
+    Map<String, dynamic> data;
+    try {
+      data = jsonDecode(jsonStr) as Map<String, dynamic>;
+    } catch (_) {
+      // 输出可能被 max_tokens 截断，尝试修补成合法 JSON
+      final repaired = _repairTruncatedJson(jsonStr);
+      if (repaired == null) rethrow;
+      data = jsonDecode(repaired) as Map<String, dynamic>;
+    }
+
     // v2.2: 注入 Token 用量到解析结果
     if (usage != null) {
       data['usage'] = usage;
     }
     return AnalysisResult.fromJson(data);
+  }
+
+  /// 尝试把被截断的 JSON 修补为可解析形式。
+  ///
+  /// 先补全未闭合的字符串和括号；仍失败则逐步砍掉末尾不完整的片段再试。
+  static String? _repairTruncatedJson(String input) {
+    var s = input.trim();
+    if (!s.startsWith('{')) return null;
+
+    for (var attempt = 0; attempt < 20; attempt++) {
+      final candidate = _closeJson(s);
+      try {
+        jsonDecode(candidate);
+        return candidate;
+      } catch (_) {
+        final cut = s.lastIndexOf(',');
+        if (cut <= 1) return null;
+        s = s.substring(0, cut);
+      }
+    }
+    return null;
+  }
+
+  /// 补全未闭合的字符串引号与括号
+  static String _closeJson(String src) {
+    final buf = StringBuffer();
+    final stack = <String>[];
+    var inString = false;
+    var escaped = false;
+
+    for (var i = 0; i < src.length; i++) {
+      final ch = src[i];
+      buf.write(ch);
+
+      if (inString) {
+        if (escaped) {
+          escaped = false;
+          continue;
+        }
+        if (ch == '\\') {
+          escaped = true;
+          continue;
+        }
+        if (ch == '"') inString = false;
+        continue;
+      }
+
+      if (ch == '"') {
+        inString = true;
+        continue;
+      }
+      if (ch == '{') {
+        stack.add('}');
+        continue;
+      }
+      if (ch == '[') {
+        stack.add(']');
+        continue;
+      }
+      if (ch == '}' || ch == ']') {
+        if (stack.isNotEmpty) stack.removeLast();
+      }
+    }
+
+    if (inString) buf.write('"');
+    while (stack.isNotEmpty) {
+      buf.write(stack.removeLast());
+    }
+    return buf.toString();
   }
 }

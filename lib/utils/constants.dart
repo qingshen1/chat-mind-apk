@@ -29,7 +29,7 @@ class Constants {
   static const String defaultApiProvider = 'doubao';
   // v2.2 模型参数默认值
   static const double defaultTemperature = 0.3;
-  static const int defaultMaxTokens = 2000;
+  static const int defaultMaxTokens = 800;
   static const double defaultTopP = 1.0;
 
   /// 各服务商 Token 单价（元 / 百万 tokens，混合输入输出均价）

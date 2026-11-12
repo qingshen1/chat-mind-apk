@@ -44,7 +44,8 @@ class _SettingsPageState extends State<SettingsPage> {
     _isCustomProvider = _selectedProviderId == 'custom';
     // v2.2 加载模型参数
     _temperature = storage.temperature;
-    _maxTokens = storage.maxTokens;
+    // 与请求侧一致：超过上限会对响应速度影响较大，这里统一收敛
+    _maxTokens = storage.maxTokens.clamp(200, 1200).toInt();
     _topP = storage.topP;
   }
 
@@ -721,9 +722,9 @@ class _SettingsPageState extends State<SettingsPage> {
                               Wrap(
                                 spacing: 8,
                                 children: [
-                                  _buildPresetChip('🛡️ 保守', 0.1, 1000, 0.9, AppTheme.success),
-                                  _buildPresetChip('⚖️ 平衡', 0.3, 2000, 1.0, AppTheme.accentStart),
-                                  _buildPresetChip('🎨 创意', 0.7, 3000, 1.0, AppTheme.accentPink),
+                                  _buildPresetChip('⚡ 极速', 0.2, 600, 1.0, AppTheme.accentCyan),
+                                  _buildPresetChip('🛡️ 保守', 0.1, 800, 0.9, AppTheme.success),
+                                  _buildPresetChip('⚖️ 平衡', 0.3, 1000, 1.0, AppTheme.accentStart),
                                 ],
                               ),
                               const SizedBox(height: 20),
