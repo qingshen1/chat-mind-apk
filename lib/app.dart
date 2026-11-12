@@ -45,10 +45,28 @@ class ChatMindApp extends StatelessWidget {
         home: Consumer<AppState>(
           builder: (context, state, _) {
             if (!state.initialized) {
-              return const Scaffold(
-                backgroundColor: AppTheme.bgDark,
-                body: Center(
-                  child: CircularProgressIndicator(color: AppTheme.accentStart),
+              return Scaffold(
+                body: Container(
+                  decoration: BoxDecoration(gradient: AppTheme.bgGradient),
+                  child: Center(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Container(
+                          width: 56,
+                          height: 56,
+                          decoration: BoxDecoration(
+                            gradient: AppTheme.accentGradient,
+                            borderRadius: BorderRadius.circular(16),
+                            boxShadow: AppTheme.accentGlow,
+                          ),
+                          child: const Icon(Icons.psychology, color: Colors.white, size: 28),
+                        ),
+                        const SizedBox(height: 20),
+                        const CircularProgressIndicator(color: AppTheme.accentStart),
+                      ],
+                    ),
+                  ),
                 ),
               );
             }

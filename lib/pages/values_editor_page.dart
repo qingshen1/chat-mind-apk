@@ -66,127 +66,194 @@ class _ValuesEditorPageState extends State<ValuesEditorPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: AppTheme.bgDark,
-      appBar: AppBar(
-        title: const Text('价值观设置'),
-        actions: [
-          TextButton(
-            onPressed: _save,
-            child: const Text('保存', style: TextStyle(color: AppTheme.accentStart, fontWeight: FontWeight.w600)),
-          ),
-        ],
-      ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            _buildSectionTitle('基础处事底线'),
-            const SizedBox(height: 8),
-            Text(
-              '勾选你希望AI严格遵守的处事原则',
-              style: TextStyle(fontSize: 12, color: AppTheme.textMuted.withOpacity(0.8)),
-            ),
-            const SizedBox(height: 12),
-            _buildCard(
-              child: Column(
-                children: Constants.baseValues.map((item) {
-                  final isSelected = _selectedBaseValues.contains(item['id']);
-                  return GestureDetector(
-                    onTap: () => _toggleBaseValue(item['id']!),
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(vertical: 14),
-                      decoration: BoxDecoration(
-                        border: Border(
-                          bottom: BorderSide(
-                            color: AppTheme.textMuted.withOpacity(0.1),
-                          ),
+      body: Container(
+        decoration: BoxDecoration(gradient: AppTheme.bgGradient),
+        child: SafeArea(
+          child: Column(
+            children: [
+              _buildHeader(),
+              Expanded(
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // ==================== 基础处事底线 ====================
+                      _buildSectionTitle('基础处事底线', Icons.shield_outlined),
+                      const SizedBox(height: 6),
+                      Text(
+                        '勾选你希望AI严格遵守的处事原则',
+                        style: TextStyle(fontSize: 12, color: AppTheme.textMuted.withOpacity(0.8)),
+                      ),
+                      const SizedBox(height: 12),
+                      _buildCard(
+                        child: Column(
+                          children: Constants.baseValues.map((item) {
+                            final isSelected = _selectedBaseValues.contains(item['id']);
+                            return GestureDetector(
+                              onTap: () => _toggleBaseValue(item['id']!),
+                              child: AnimatedContainer(
+                                duration: const Duration(milliseconds: 150),
+                                margin: const EdgeInsets.only(bottom: 4),
+                                padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 12),
+                                decoration: BoxDecoration(
+                                  color: isSelected
+                                      ? AppTheme.accentStart.withOpacity(0.08)
+                                      : Colors.transparent,
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
+                                child: Row(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    AnimatedContainer(
+                                      duration: const Duration(milliseconds: 150),
+                                      width: 22,
+                                      height: 22,
+                                      margin: const EdgeInsets.only(top: 1, right: 12),
+                                      decoration: BoxDecoration(
+                                        gradient: isSelected ? AppTheme.accentGradient : null,
+                                        color: isSelected ? null : AppTheme.bgDarker,
+                                        borderRadius: BorderRadius.circular(6),
+                                        border: isSelected
+                                            ? null
+                                            : Border.all(color: Colors.white.withOpacity(0.15)),
+                                        boxShadow: isSelected ? AppTheme.accentGlow : null,
+                                      ),
+                                      child: isSelected
+                                          ? const Icon(Icons.check, size: 14, color: Colors.white)
+                                          : null,
+                                    ),
+                                    Expanded(
+                                      child: Text(
+                                        item['text']!,
+                                        style: TextStyle(
+                                          fontSize: 14,
+                                          height: 1.5,
+                                          color: isSelected ? AppTheme.textPrimary : AppTheme.textSecondary,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            );
+                          }).toList(),
                         ),
                       ),
-                      child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Container(
-                            width: 22,
-                            height: 22,
-                            margin: const EdgeInsets.only(top: 1, right: 12),
-                            decoration: BoxDecoration(
-                              gradient: isSelected ? AppTheme.accentGradient : null,
-                              color: isSelected ? null : AppTheme.bgDark,
-                              borderRadius: BorderRadius.circular(6),
-                              border: isSelected
-                                  ? null
-                                  : Border.all(color: AppTheme.textMuted.withOpacity(0.4)),
+
+                      const SizedBox(height: 28),
+
+                      // ==================== 分人群专属价值观 ====================
+                      _buildSectionTitle('分人群专属价值观', Icons.people_outline),
+                      const SizedBox(height: 6),
+                      Text(
+                        '为不同关系场景添加专属约束，让回复更精准',
+                        style: TextStyle(fontSize: 12, color: AppTheme.textMuted.withOpacity(0.8)),
+                      ),
+                      const SizedBox(height: 16),
+                      _buildSceneTabs(),
+                      const SizedBox(height: 16),
+                      _buildCard(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                Container(
+                                  width: 8,
+                                  height: 8,
+                                  decoration: BoxDecoration(
+                                    gradient: AppTheme.accentGradient,
+                                    shape: BoxShape.circle,
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                Text(
+                                  Constants.scenes[_selectedTab],
+                                  style: const TextStyle(
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.w600,
+                                    color: AppTheme.textPrimary,
+                                  ),
+                                ),
+                              ],
                             ),
-                            child: isSelected
-                                ? const Icon(Icons.check, size: 14, color: Colors.white)
-                                : null,
-                          ),
-                          Expanded(
-                            child: Text(
-                              item['text']!,
-                              style: TextStyle(
-                                fontSize: 14,
-                                height: 1.5,
-                                color: isSelected ? AppTheme.textPrimary : AppTheme.textSecondary,
+                            const SizedBox(height: 12),
+                            TextField(
+                              controller: _sceneControllers[Constants.scenes[_selectedTab]],
+                              maxLines: 4,
+                              style: const TextStyle(color: AppTheme.textPrimary, fontSize: 14),
+                              decoration: InputDecoration(
+                                hintText: Constants.sceneValueHints[Constants.scenes[_selectedTab]],
+                                hintStyle: TextStyle(color: AppTheme.textMuted.withOpacity(0.5)),
+                                filled: true,
+                                fillColor: AppTheme.bgDarker,
+                                border: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                  borderSide: BorderSide.none,
+                                ),
+                                contentPadding: const EdgeInsets.all(14),
                               ),
                             ),
-                          ),
-                        ],
+                          ],
+                        ),
                       ),
-                    ),
-                  );
-                }).toList(),
-              ),
-            ),
-            const SizedBox(height: 28),
-            _buildSectionTitle('分人群专属价值观'),
-            const SizedBox(height: 8),
-            Text(
-              '为不同关系场景添加专属约束，让回复更精准',
-              style: TextStyle(fontSize: 12, color: AppTheme.textMuted.withOpacity(0.8)),
-            ),
-            const SizedBox(height: 16),
-            _buildSceneTabs(),
-            const SizedBox(height: 16),
-            _buildCard(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    Constants.scenes[_selectedTab],
-                    style: const TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w600,
-                      color: AppTheme.textPrimary,
-                    ),
+                      const SizedBox(height: 40),
+                    ],
                   ),
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: _sceneControllers[Constants.scenes[_selectedTab]],
-                    maxLines: 4,
-                    style: const TextStyle(color: AppTheme.textPrimary, fontSize: 14),
-                    decoration: InputDecoration(
-                      hintText: Constants.sceneValueHints[Constants.scenes[_selectedTab]],
-                      hintStyle: TextStyle(color: AppTheme.textMuted.withOpacity(0.5)),
-                      filled: true,
-                      fillColor: AppTheme.bgDark,
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12),
-                        borderSide: BorderSide.none,
-                      ),
-                      contentPadding: const EdgeInsets.all(14),
-                    ),
-                  ),
-                ],
+                ),
               ),
-            ),
-            const SizedBox(height: 40),
-          ],
+            ],
+          ),
         ),
       ),
     );
   }
+
+  // ==================== 头部 ====================
+
+  Widget _buildHeader() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 12),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Row(
+            children: [
+              IconButton(
+                icon: const Icon(Icons.arrow_back_ios_new, color: AppTheme.textSecondary, size: 20),
+                onPressed: () => Navigator.pop(context),
+              ),
+              ShaderMask(
+                shaderCallback: (bounds) => AppTheme.accentGradient.createShader(bounds),
+                child: const Text(
+                  '价值观设置',
+                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.white),
+                ),
+              ),
+            ],
+          ),
+          TextButton(
+            onPressed: _save,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              decoration: BoxDecoration(
+                gradient: AppTheme.accentGradient,
+                borderRadius: BorderRadius.circular(10),
+                boxShadow: AppTheme.accentGlow,
+              ),
+              child: const Text(
+                '保存',
+                style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 14),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ==================== 场景 Tab ====================
 
   Widget _buildSceneTabs() {
     return SingleChildScrollView(
@@ -196,16 +263,16 @@ class _ValuesEditorPageState extends State<ValuesEditorPage> {
           final isSelected = index == _selectedTab;
           return GestureDetector(
             onTap: () => setState(() => _selectedTab = index),
-            child: Container(
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 200),
               margin: const EdgeInsets.only(right: 10),
-              padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 8),
+              padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 9),
               decoration: BoxDecoration(
                 gradient: isSelected ? AppTheme.accentGradient : null,
                 color: isSelected ? null : AppTheme.bgCard,
                 borderRadius: BorderRadius.circular(20),
-                border: isSelected
-                    ? null
-                    : Border.all(color: AppTheme.textMuted.withOpacity(0.3)),
+                border: isSelected ? null : Border.all(color: Colors.white.withOpacity(0.08)),
+                boxShadow: isSelected ? AppTheme.accentGlow : null,
               ),
               child: Text(
                 Constants.scenes[index],
@@ -222,14 +289,18 @@ class _ValuesEditorPageState extends State<ValuesEditorPage> {
     );
   }
 
-  Widget _buildSectionTitle(String text) {
-    return Text(
-      text,
-      style: const TextStyle(
-        fontSize: 16,
-        fontWeight: FontWeight.w600,
-        color: AppTheme.textPrimary,
-      ),
+  // ==================== 通用组件 ====================
+
+  Widget _buildSectionTitle(String text, IconData icon) {
+    return Row(
+      children: [
+        Icon(icon, size: 16, color: AppTheme.accentStart),
+        const SizedBox(width: 8),
+        Text(
+          text,
+          style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: AppTheme.textPrimary),
+        ),
+      ],
     );
   }
 
@@ -238,9 +309,10 @@ class _ValuesEditorPageState extends State<ValuesEditorPage> {
       width: double.infinity,
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: AppTheme.bgCard.withOpacity(0.6),
+        gradient: AppTheme.cardGlassGradient,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: AppTheme.textMuted.withOpacity(0.1)),
+        border: Border.all(color: Colors.white.withOpacity(0.06)),
+        boxShadow: AppTheme.cardShadow,
       ),
       child: child,
     );
