@@ -7,6 +7,7 @@ import '../utils/theme.dart';
 import '../utils/toast.dart';
 import '../utils/constants.dart';
 import '../models/analysis_result.dart';
+import '../models/analysis_progress.dart';
 import '../services/storage_service.dart';
 import '../services/permission_service.dart';
 import '../services/screenshot_service.dart';
@@ -24,6 +25,9 @@ class HomePage extends StatefulWidget {
 class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
   String _currentScene = Constants.scenes.first;
   bool _isAnalyzing = false;
+  AnalysisProgress? _streamProgress;
+  DateTime? _analyzeStartAt;
+  Timer? _elapsedTimer;
   StreamSubscription<ScreenshotData>? _screenshotSub;
   late AnimationController _pulseController;
   late Animation<double> _pulseAnimation;
@@ -46,6 +50,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
 
   @override
   void dispose() {
+    _elapsedTimer?.cancel();
     _screenshotSub?.cancel();
     _pulseController.dispose();
     super.dispose();
@@ -88,34 +93,74 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
   Future<void> _analyzeImage(Uint8List imageBytes, {String? scene}) async {
     if (_isAnalyzing) return;
 
-    setState(() => _isAnalyzing = true);
+    final targetScene = scene ?? _currentScene;
+
+    setState(() {
+      _isAnalyzing = true;
+      _streamProgress = null;
+      _analyzeStartAt = DateTime.now();
+    });
+    // 首字可能几秒后才到，用定时器保证耗时显示持续走动
+    _elapsedTimer?.cancel();
+    _elapsedTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (mounted && _isAnalyzing) setState(() {});
+    });
+
+    final baseValues = StorageService().baseValues;
+    final sceneValues = StorageService().sceneValues;
 
     try {
-      final baseValues = StorageService().baseValues;
-      final sceneValues = StorageService().sceneValues;
+      AnalysisResult? result;
 
-      final result = await AIService.analyzeImage(
+      // 优先走流式：首屏就能看到内容逐段出现
+      await for (final progress in AIService.analyzeImageStream(
         imageBytes,
-        scene: scene ?? _currentScene,
+        scene: targetScene,
         baseValues: baseValues,
         sceneValues: sceneValues,
-      );
-
-      if (mounted) {
-        _showResultDialog(result, scene: scene ?? _currentScene);
+      )) {
+        if (!mounted) break;
+        setState(() => _streamProgress = progress);
+        if (progress.result != null) result = progress.result;
       }
 
-      await FloatWindowService.showAnalysisPanel(
-        result,
-        scene: scene ?? _currentScene,
-      );
+      if (result == null) {
+        throw StreamUnsupportedException('流式响应未返回完整结果');
+      }
+
+      await _deliverResult(result, targetScene);
+    } on StreamUnsupportedException {
+      // 服务商不支持流式：回退一次性请求，功能不受影响
+      try {
+        final result = await AIService.analyzeImage(
+          imageBytes,
+          scene: targetScene,
+          baseValues: baseValues,
+          sceneValues: sceneValues,
+        );
+        await _deliverResult(result, targetScene);
+      } catch (e) {
+        if (mounted) AppToast.show(context, '分析失败: $e');
+      }
     } catch (e) {
-      AppToast.show(context, '分析失败: $e');
+      if (mounted) AppToast.show(context, '分析失败: $e');
     } finally {
+      _elapsedTimer?.cancel();
       if (mounted) {
-        setState(() => _isAnalyzing = false);
+        setState(() {
+          _isAnalyzing = false;
+          _streamProgress = null;
+          _analyzeStartAt = null;
+        });
       }
     }
+  }
+
+  /// 展示分析结果（弹窗 + 悬浮窗）
+  Future<void> _deliverResult(AnalysisResult result, String scene) async {
+    if (!mounted) return;
+    _showResultDialog(result, scene: scene);
+    await FloatWindowService.showAnalysisPanel(result, scene: scene);
   }
 
   void _showResultDialog(AnalysisResult result, {required String scene}) {
@@ -154,14 +199,19 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
             children: [
               _buildAppBar(),
               Expanded(
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 20),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const SizedBox(height: 8),
-                      _buildHeroSection(),
-                      const SizedBox(height: 24),
+                child: SingleChildScrollView(
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 20),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const SizedBox(height: 8),
+                        _buildHeroSection(),
+                        if (_isAnalyzing) ...[
+                          const SizedBox(height: 16),
+                          _buildStreamingCard(),
+                        ],
+                        const SizedBox(height: 24),
                       _buildSceneSelector(),
                       const SizedBox(height: 24),
                       _buildMainButton(
@@ -179,10 +229,10 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                         isSecondary: true,
                       ),
                       const SizedBox(height: 14),
-                      _buildTips(),
-                      const Spacer(),
-                      const SizedBox(height: 24),
-                    ],
+                        _buildTips(),
+                        const SizedBox(height: 24),
+                      ],
+                    ),
                   ),
                 ),
               ),
@@ -313,6 +363,81 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                   : const Icon(Icons.auto_awesome, color: Colors.white, size: 28),
             ),
           ),
+        ],
+      ),
+    );
+  }
+
+  /// 分析进行中的实时进度卡（v2.2.2）
+  Widget _buildStreamingCard() {
+    final progress = _streamProgress;
+    final startAt = _analyzeStartAt;
+    final elapsed = startAt == null ? 0 : DateTime.now().difference(startAt).inSeconds;
+    final received = progress?.receivedChars ?? 0;
+    final preview = progress?.preview ?? '';
+    final firstToken = progress?.firstTokenMs;
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        gradient: AppTheme.cardGlassGradient,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: AppTheme.accentCyan.withOpacity(0.25)),
+        boxShadow: AppTheme.cardShadow,
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const SizedBox(
+                width: 14,
+                height: 14,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: AppTheme.accentCyan,
+                ),
+              ),
+              const SizedBox(width: 8),
+              const Text(
+                '正在分析…',
+                style: TextStyle(
+                  color: AppTheme.textPrimary,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const Spacer(),
+              Text(
+                '$elapsed s · $received 字',
+                style: const TextStyle(color: AppTheme.textMuted, fontSize: 11),
+              ),
+            ],
+          ),
+          if (firstToken != null) ...[
+            const SizedBox(height: 4),
+            Text(
+              '首字响应 ${firstToken}ms',
+              style: const TextStyle(color: AppTheme.textMuted, fontSize: 10),
+            ),
+          ],
+          if (preview.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            ConstrainedBox(
+              constraints: const BoxConstraints(maxHeight: 120),
+              child: SingleChildScrollView(
+                child: Text(
+                  preview,
+                  style: const TextStyle(
+                    color: AppTheme.textSecondary,
+                    fontSize: 12,
+                    height: 1.5,
+                  ),
+                ),
+              ),
+            ),
+          ],
         ],
       ),
     );

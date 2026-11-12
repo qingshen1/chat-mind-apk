@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:typed_data';
 import 'package:http/http.dart' as http;
 import '../models/analysis_result.dart';
+import '../models/analysis_progress.dart';
 import '../models/test_connection_result.dart';
 import '../utils/constants.dart';
 import 'storage_service.dart';
@@ -117,6 +118,223 @@ class AIService {
   }
 
   // ==================== 模型自动识别 ====================
+
+  // ==================== 流式分析（v2.2.2） ====================
+
+  /// 流式分析聊天截图。
+  ///
+  /// 与 [analyzeImage] 的一次性返回不同，这里解析 SSE 增量，
+  /// 每收到一段内容就产出一帧进度，界面可实时展示，首屏响应快得多。
+  ///
+  /// 若服务商忽略 stream 参数直接返回完整 JSON，也会自动兼容解析。
+  static Stream<AnalysisProgress> analyzeImageStream(
+    Uint8List imageBytes, {
+    required String scene,
+    required List<String> baseValues,
+    required Map<String, String> sceneValues,
+  }) async* {
+    final storage = StorageService();
+    final apiKey = storage.apiKey;
+    final model = storage.model;
+    final baseUrl = storage.baseUrl;
+    final supportsVision = storage.supportsVision;
+
+    if (apiKey.isEmpty) {
+      throw Exception('请先在设置中配置 API Key');
+    }
+    if (baseUrl.isEmpty) {
+      throw Exception('请先在设置中配置 API 地址');
+    }
+
+    final base64Image = base64Encode(imageBytes);
+    final systemPrompt = _buildSystemPrompt(scene, baseValues, sceneValues);
+
+    final List<dynamic> userContent;
+    if (supportsVision) {
+      userContent = [
+        {
+          'type': 'image_url',
+          'image_url': {'url': 'data:image/jpeg;base64,$base64Image'},
+        },
+        {'type': 'text', 'text': '分析这张聊天截图，输出JSON格式结果。'},
+      ];
+    } else {
+      userContent = [
+        {
+          'type': 'text',
+          'text': '当前模型不支持图片输入，请切换到支持视觉的模型（如 GPT-4o、豆包 Vision、通义千问 VL 等）。',
+        },
+      ];
+    }
+
+    final requestBody = <String, dynamic>{
+      'model': model,
+      'messages': [
+        {'role': 'system', 'content': systemPrompt},
+        {'role': 'user', 'content': userContent},
+      ],
+      'temperature': storage.temperature,
+      'max_tokens': storage.maxTokens,
+      if (storage.topP < 1.0) 'top_p': storage.topP,
+      'stream': true,
+    };
+
+    final endpoint = Constants.normalizeChatUrl(baseUrl);
+    final client = http.Client();
+    final stopwatch = Stopwatch()..start();
+    int? firstTokenMs;
+    final rawResponse = StringBuffer();
+    final contentBuffer = StringBuffer();
+
+    try {
+      final request = http.Request('POST', Uri.parse(endpoint));
+      request.headers.addAll({
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer $apiKey',
+        'Accept': 'text/event-stream',
+      });
+      request.body = jsonEncode(requestBody);
+
+      final streamed = await client.send(request).timeout(
+        const Duration(seconds: 30),
+        onTimeout: () => throw Exception('连接超时，请检查网络或 API 地址'),
+      );
+
+      if (streamed.statusCode != 200) {
+        final body = await streamed.stream.bytesToString();
+        throw Exception(
+          'API请求失败 (${streamed.statusCode}): ${_snippet(_extractErrorMessage(body))}',
+        );
+      }
+
+      await for (final line
+          in streamed.stream.transform(utf8.decoder).transform(const LineSplitter())) {
+        rawResponse.writeln(line);
+        final trimmed = line.trim();
+        if (trimmed.isEmpty || !trimmed.startsWith('data:')) continue;
+
+        final payload = trimmed.substring(5).trim();
+        if (payload == '[DONE]') break;
+
+        try {
+          final obj = jsonDecode(payload);
+          final delta = obj['choices']?[0]?['delta']?['content'] as String?;
+          if (delta == null || delta.isEmpty) continue;
+
+          firstTokenMs ??= stopwatch.elapsedMilliseconds;
+          contentBuffer.write(delta);
+          yield AnalysisProgress(
+            raw: contentBuffer.toString(),
+            preview: _extractPreview(contentBuffer.toString()),
+            receivedChars: contentBuffer.length,
+            firstTokenMs: firstTokenMs,
+          );
+        } catch (_) {
+          // 忽略无法解析的心跳行、注释行
+        }
+      }
+
+      // 服务商忽略 stream 参数、直接返回完整 JSON 时走这里
+      if (contentBuffer.isEmpty) {
+        final fullContent = _extractContentFromFullResponse(rawResponse.toString());
+        if (fullContent == null || fullContent.isEmpty) {
+          throw StreamUnsupportedException(
+            '接口没有返回可解析的流式内容（已尝试地址：$endpoint）',
+          );
+        }
+        yield AnalysisProgress(
+          raw: fullContent,
+          preview: _extractPreview(fullContent),
+          receivedChars: fullContent.length,
+          firstTokenMs: stopwatch.elapsedMilliseconds,
+          result: _parseContent(fullContent),
+        );
+        return;
+      }
+
+      final text = contentBuffer.toString();
+      yield AnalysisProgress(
+        raw: text,
+        preview: _extractPreview(text),
+        receivedChars: text.length,
+        firstTokenMs: firstTokenMs,
+        result: _parseContent(text),
+      );
+    } finally {
+      client.close();
+    }
+  }
+
+  /// 从完整的非流式响应体里取出 choices[0].message.content
+  static String? _extractContentFromFullResponse(String body) {
+    final trimmed = body.trim();
+    if (trimmed.isEmpty) return null;
+    try {
+      final data = jsonDecode(trimmed);
+      if (data is Map<String, dynamic>) {
+        return data['choices']?[0]?['message']?['content'] as String?;
+      }
+    } catch (_) {
+      // 不是完整 JSON，忽略
+    }
+    return null;
+  }
+
+  /// 从错误响应体里提取可读的错误信息
+  static String _extractErrorMessage(String body) {
+    try {
+      final data = jsonDecode(body);
+      if (data is Map<String, dynamic>) {
+        final err = data['error'];
+        if (err is Map && err['message'] != null) {
+          return err['message'].toString();
+        }
+        if (data['message'] != null) return data['message'].toString();
+      }
+    } catch (_) {
+      // 直接返回原文
+    }
+    return body;
+  }
+
+  /// 截断过长的错误文本，避免刷屏
+  static String _snippet(String text, [int max = 200]) {
+    final flat = text.replaceAll(RegExp(r'\s+'), ' ').trim();
+    return flat.length <= max ? flat : '${flat.substring(0, max)}…';
+  }
+
+  /// 从流式累积的 JSON 文本里提取已完成字段，供界面实时预览
+  static String _extractPreview(String text) {
+    final parts = <String>[];
+
+    final psychology = _extractStringField(text, 'psychology');
+    if (psychology != null && psychology.isNotEmpty) {
+      parts.add('对方心理：$psychology');
+    }
+    final intention = _extractStringField(text, 'intention');
+    if (intention != null && intention.isNotEmpty) {
+      parts.add('真实意图：$intention');
+    }
+    final risk = _extractStringField(text, 'risk_warning');
+    if (risk != null && risk.isNotEmpty) {
+      parts.add('风险提示：$risk');
+    }
+    return parts.join('\n\n');
+  }
+
+  /// 提取已完成（字符串已闭合）的 JSON 字段值，未闭合时返回 null
+  static String? _extractStringField(String text, String key) {
+    final pattern = RegExp('"' + key + r'"\s*:\s*"((?:[^"\\]|\\.)*)"');
+    final match = pattern.firstMatch(text);
+    if (match == null) return null;
+
+    final raw = match.group(1) ?? '';
+    try {
+      return jsonDecode('"' + raw + '"') as String;
+    } catch (_) {
+      return raw;
+    }
+  }
 
   /// 自动识别可用模型列表
   /// 调用 OpenAI 兼容的 /models 接口获取当前 API Key 可用的所有模型
